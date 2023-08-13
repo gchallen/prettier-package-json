@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 const cmdline = require('commander');
-const fs = require('fs-extra');
+const fs = require('fs/promises');
+const fsExtra = require('fs-extra');
 const path = require('path');
 const prettier = require('../build');
 const { name, version } = require('../package.json');
@@ -13,6 +14,7 @@ cmdline
   .version(version)
   .arguments('[PATH...]')
   .option('--write', 'Edit the files in-place. (Beware!)')
+  .option('--skipIfUnchanged', "Don't modify the file if it has not changed.")
   .option(
     '--tab-width <int>',
     `Specify the number of spaces per indentation-level. Defaults to ${defaults.tabWidth}.`,
@@ -57,12 +59,14 @@ if (cmdline.listDifferent) {
       return Promise.all(paths.map((filepath) => format(filepath, options)));
     })
     .then((details) => {
-      details.forEach(({ filepath, json, error }) => {
+      details.forEach(({ filepath, json, modified, error }) => {
         if (error) {
           console.error(error);
         } else {
           if (cmdline.write) {
-            return fs.writeFile(filepath, json);
+            if (!(modified === false && cmdline.skipIfUnchanged)) {
+              return fs.writeFile(filepath, json);
+            }
           } else {
             return console.log(json);
           }
@@ -79,8 +83,10 @@ function globToPaths(arg) {
 
 async function format(filepath, options) {
   try {
-    const json = await fs.readJson(filepath);
-    return { filepath, json: prettier.format(json, options) };
+    const originalContents = await fs.readFile(filepath, { encoding: 'utf-8' });
+    const originalJson = JSON.parse(originalContents);
+    const newJson = prettier.format(originalJson, options);
+    return { filepath, json: newJson, modified: originalContents != newJson };
   } catch (error) {
     return { filepath, error };
   }
@@ -88,7 +94,7 @@ async function format(filepath, options) {
 
 async function check(filepath, options) {
   try {
-    const json = await fs.readJson(filepath);
+    const json = await fsExtra.readJson(filepath);
     const isSame = prettier.check(json, options);
     return { filepath, isDifferent: !isSame };
   } catch (error) {
